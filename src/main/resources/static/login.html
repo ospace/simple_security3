@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Login</title>
+</head>
+<body>
+	<h1>Login</h1>
+	<a href="/register.html">Register</a>
+	<div id="error" style="display:none">아이디와 비밀번호를 확인해 주세요.</div> 
+    <form method="POST">
+    	<!-- <c:if test="${not empty param.error}"><div>Try Again</div></c:if> -->
+        <div>
+            <input name="username" type="text" placeholder="UserID"/>
+        </div>
+        <div>
+            <input name="password" type="password" placeholder="Password"/>
+        </div>
+        <div>
+            <input type="submit" value="로그인"/>
+        </div>
+    </form>
+    <script>
+	    function getStatus(){
+	    	let re = /[\\?&]status=([^&#]*)/.exec(window.location.search);
+	    	return re && re[1];
+	    }
+	     
+	    (_=>{
+	    	let err = document.getElementById('error');
+	    	if(err && getStatus()) {
+	    	    err.style.display = 'inherit';    		
+    	    }
+	    })();
+    </script>
+</body>
+</html>
