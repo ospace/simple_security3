@@ -2,23 +2,57 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Hello2</title>
+<title>Main</title>
 </head>
 <body>
-<h1>Hello</h1>
-<!-- <a href="/init">Init</a> -->
-<a href="/logout">Logout</a>
- 
- <p>
- <a href="/about/index.html">About</a>
- | <a href="/user/index.html">User</a>
- | <a href="/admin/index.html">Admin</a>
+<h1>Main</h1>
 
+<button onclick="onLogout()">Logout</button>
+<button onclick="onMe()">Me</button>
 
-<!-- <form action="/api/hello" method="post">
-    <div>
-        <input type="submit" value="hello"/>
-    </div>
-</form> -->
+<div id="output" style="word-wrap: break-word; "></div>
+<script>
+    function onLogout() {
+    	fetch('/logout', {
+    		method: 'GET'
+    	}).then(function(res) {
+    		if(res.ok) {
+    			return Promise.resolve();
+    		} else {
+    			return Promise.reject(res);
+    			return res.json();
+    		}
+    	}).then(function(json) {
+    		window.location.replace('/thankyou.html');
+    	}).catch(function(err) {
+    		console.log('ERROR', err.status);
+    		err.json().then(function(json) {
+    			alert('Error: '+ json.error+'('+json.message+')');
+    		    window.location.replace('/login.html');
+    		});
+    	})
+    }
+    
+    function onMe() {
+    	fetch('/api/me', {
+    		method: 'GET'
+    	}).then(function(res){
+    		if(res.ok) {
+    			return res.json();
+    		} else {
+    			return Promise.reject(res);
+    		}
+    	}).then(function(json) {
+    		setOutput(json);
+    	}).catch(function(err) {
+    		console.log('ERROR', err.status);
+    		err.json().then(setOutput);
+    	});
+    };
+    
+    function setOutput(json) {
+    	document.getElementById('output').innerText = JSON.stringify(json);
+    }
+</script>
 </body>
 </html>

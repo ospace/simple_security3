@@ -1,58 +1,65 @@
 package com.tistory.ospace.simplesecurity3.configuration;
 
-//import org.springframework.security.oauth2.client.OAuth2RestTemplate;
-//import org.springframework.security.oauth2.client.filter.OAuth2ClientAuthenticationProcessingFilter;
-//import org.springframework.security.oauth2.client.token.grant.code.AuthorizationCodeResourceDetails;
-//import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
-//import org.springframework.web.filter.CompositeFilter;
-//
-//import java.io.IOException;
-//import java.util.ArrayList;
-//import java.util.List;
-//
-//import javax.servlet.Filter;
-//import javax.servlet.FilterChain;
-//import javax.servlet.FilterConfig;
-//import javax.servlet.ServletException;
-//import javax.servlet.ServletRequest;
-//import javax.servlet.ServletResponse;
-//import javax.servlet.http.HttpServletRequest;
-import javax.sql.DataSource;
+import java.io.IOException;
 
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
-//import org.springframework.boot.autoconfigure.security.oauth2.resource.ResourceServerProperties;
-//import org.springframework.boot.autoconfigure.security.oauth2.resource.UserInfoTokenServices;
+import org.springframework.http.MediaType;
+import org.springframework.http.converter.HttpMessageNotWritableException;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.server.ServletServerHttpResponse;
 import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.builders.WebSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.AuthenticationEntryPoint;
+import org.springframework.security.web.authentication.AuthenticationFailureHandler;
+import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.authentication.RememberMeServices;
+import org.springframework.security.web.authentication.SavedRequestAwareAuthenticationSuccessHandler;
+import org.springframework.security.web.authentication.SimpleUrlAuthenticationFailureHandler;
+import org.springframework.security.web.authentication.logout.LogoutSuccessHandler;
 import org.springframework.security.web.authentication.rememberme.TokenBasedRememberMeServices;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.tistory.ospace.simplesecurity3.entity.Response;
+
 @EnableWebSecurity
 public class WebSecurityConfig extends WebSecurityConfigurerAdapter {
-	@Autowired
-	private DataSource dataSource;
+    private static final Logger LOGGER = LoggerFactory.getLogger(WebSecurityConfig.class);
+    
+	private static MappingJackson2HttpMessageConverter jsonConverter = new MappingJackson2HttpMessageConverter(
+	        new ObjectMapper()
+	            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+	            .registerModule(new JavaTimeModule())
+	    );
 	
 	@Autowired
 	public void configureGlobal(AuthenticationManagerBuilder auth) throws Exception {
-		auth.jdbcAuthentication()
-			.dataSource(dataSource)
-			.usersByUsernameQuery("select username, password, enabled from users where username=?")
-			.authoritiesByUsernameQuery("select username, authority from authorities where username=?")
-			.groupAuthoritiesByUsername("select g.id, g.group_name, ga.authority, gm.username from groups g, group_authorities ga, group_members gm where g.id = ga.group_id and gm.group_id = ga.group_id and gm.username = ?")
+		auth.inMemoryAuthentication()
+			.withUser("admin").password(passwordEncoder().encode("adminpass")).roles("ADMIN")
+			.and()
 			.passwordEncoder(passwordEncoder())
 		;
 	}
 	
 	@Override
 	public void configure(WebSecurity web) throws Exception {
-		web.ignoring().antMatchers("/lib/**", "/image/**",  "/h2/**");
+		web.ignoring().antMatchers("/assets/**", "/js/**");
 	}
 	
 	@Override
@@ -60,18 +67,18 @@ public class WebSecurityConfig extends WebSecurityConfigurerAdapter {
 		http.headers().frameOptions().disable()
 		    .and().csrf().disable()
 		    .authorizeRequests()
-		    	.antMatchers("/login**", "/thankyou**", "/register**").permitAll()
-			    .antMatchers("/admin/**").hasRole("ADMIN")		
-			    .antMatchers("/about/**").hasAnyRole("ADMIN", "USER")
-			    .antMatchers("/user/**").hasAnyRole("USER")
+		    	.antMatchers("/login**", "/thankyou**").permitAll()
 				.anyRequest().authenticated()
 				.and()
 			.formLogin()
-				.loginPage("/login")                // 인증페이지 경로
+				//.loginPage("/login.html") // 인증페이지 경로
+				.loginProcessingUrl("/login")
+				.successHandler(loginSuccessHandler())
+                .failureHandler(loginFailureHandler())
 				.and()
 			.logout()
 				.logoutRequestMatcher(new AntPathRequestMatcher("/logout"))
-				.logoutSuccessUrl("/thankyou.html")
+				.logoutSuccessHandler(logoutSuccessHandler())
 				.deleteCookies("JSESSIONID")
 				.deleteCookies("REMEMBER_ME_COOKIE")
 				.invalidateHttpSession(true)
@@ -81,7 +88,8 @@ public class WebSecurityConfig extends WebSecurityConfigurerAdapter {
 				.rememberMeServices(tokenBasedRememberMeServices())
 				.and()
 			.exceptionHandling()
-				.accessDeniedPage("/denied.html")
+			    .authenticationEntryPoint(authenticationEntryPoint())
+			    
 			;
 	}
 	
@@ -100,4 +108,62 @@ public class WebSecurityConfig extends WebSecurityConfigurerAdapter {
 	}
 	
 	
+	private AuthenticationSuccessHandler loginSuccessHandler() {
+        return new SavedRequestAwareAuthenticationSuccessHandler() {
+            @Override
+            public void onAuthenticationSuccess(HttpServletRequest req, HttpServletResponse res, Authentication auth) throws IOException {
+                String accept = req.getHeader("accept");
+                
+                LOGGER.info("onAuthenticationSuccess begin: accept[{}]", accept);
+                
+                res.setStatus(HttpServletResponse.SC_OK);
+            }
+        };
+    }
+    
+    private AuthenticationFailureHandler loginFailureHandler() {
+        return new SimpleUrlAuthenticationFailureHandler() {
+            @Override
+            public void onAuthenticationFailure(HttpServletRequest req, HttpServletResponse res, AuthenticationException ex) throws IOException {
+                LOGGER.info("onAuthenticationFailure begin:");
+                
+                writeJson(HttpServletResponse.SC_UNAUTHORIZED, "AuthorizeFailed", ex.getMessage(), req, res);
+                LOGGER.error("onAuthenticationFailure end:");
+            }
+        };
+    }
+    
+    private LogoutSuccessHandler logoutSuccessHandler() {
+        return new LogoutSuccessHandler() {
+            @Override
+            public void onLogoutSuccess(HttpServletRequest req, HttpServletResponse res, Authentication auth)
+                    throws IOException, ServletException {
+                LOGGER.info("onLogoutSuccess begin:");
+                
+                if (null == auth) {
+                    writeJson(HttpServletResponse.SC_BAD_REQUEST, "BadRequest", "no authentication", req, res);
+                } else {
+                    // 인증된 상태
+                }
+            }
+        };
+    }
+    
+    private AuthenticationEntryPoint authenticationEntryPoint() {
+        return new AuthenticationEntryPoint() {
+            @Override
+            public void commence(HttpServletRequest req, HttpServletResponse res, AuthenticationException authEx)
+                    throws IOException, ServletException {
+                LOGGER.error("authenticationEntryPoint begin: authEx[{}]", authEx.getMessage());
+                res.sendError(HttpServletResponse.SC_UNAUTHORIZED, authEx.getMessage());
+                //미인증된 사용자는 login 페이지로 이동할 수 있음.
+                //res.sendRedirect("/login.html");
+            }
+        };
+    }
+    
+    private static void writeJson(int status, String error, String message, HttpServletRequest req, HttpServletResponse res) throws HttpMessageNotWritableException, IOException {
+        res.setStatus(status);
+        jsonConverter.write(Response.of(status, error, message, req.getRequestURI()), MediaType.APPLICATION_JSON, new ServletServerHttpResponse(res));
+    }
 }
